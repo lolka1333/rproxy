@@ -1,5 +1,8 @@
 # Keep the build context tiny: only Cargo.toml, Cargo.lock and src/ are needed.
 /target
+# Host-side runtime dir (seeded by the running container); never let local
+# config/logs leak into the build context.
+/data
 **/*.log
 .git
 .gitignore

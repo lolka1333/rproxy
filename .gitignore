@@ -1,3 +1,7 @@
 /target
 *.log
 /rundata
+# Runtime data dir shared with the container via `- ./data:/data` in
+# docker-compose.yml: the container seeds rproxy.conf + blocked.txt here and you
+# edit them in place. Ignore it so local config never shows as a repo change.
+/data

@@ -1,20 +1,36 @@
 services:
+  # One-shot ownership fix. A bind mount makes Docker create the host ./data as
+  # root, but rproxy runs non-root (uid 65532) and so cannot write there — which
+  # would leave ./data empty. This tiny helper runs as root, hands ./data to uid
+  # 65532, and exits; rproxy waits for it (see depends_on) and then creates
+  # rproxy.conf / blocked.txt in ./data itself. `chown` is idempotent, so this
+  # re-running on every `up` is harmless (and self-heals a root-owned ./data left
+  # by an earlier attempt). "Exited (0)" in `docker compose ps` is the expected,
+  # successful state for this service — not an error or a restart loop.
+  data-init:
+    image: busybox:1.36
+    user: "0:0"
+    command: ["chown", "-R", "65532:65532", "/data"]
+    volumes:
+      - ./data:/data
+    restart: "no"
+
   rproxy:
     build: .
     image: rproxy
     container_name: rproxy
-    # Publish the proxy port; point the Android device at <docker-host-ip>:20487.
+    # Don't start until data-init has fixed ./data ownership and exited 0.
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    # Point the Android device's Global HTTP Proxy at <docker-host-ip>:20487.
     ports:
       - "20487:20487"
+    # The container creates rproxy.conf + blocked.txt here on first run and shares
+    # them out to ./data on the host. They persist across restarts and rebuilds.
+    # Edit them with `sudo` (they're owned by the container's uid 65532), then
+    # `docker compose restart rproxy` to apply. Logs go to stdout (`docker logs
+    # rproxy`); set `log = ...` in rproxy.conf to also write a file under ./data.
+    volumes:
+      - ./data:/data
     restart: unless-stopped
-
-    # The container's data dir is /data. On first run rproxy writes rproxy.conf
-    # and blocked.txt there and loads them. Mount a host folder over it to keep
-    # and edit those files from outside the container:
-    #
-    #   volumes:
-    #     - ./data:/data      # must be writable by uid 65532 (the container user)
-    #
-    # Then edit ./data/rproxy.conf (listen, timeouts, `blocklist = blocked.txt`,
-    # …) and ./data/blocked.txt, and restart. Logs go to stdout -> `docker logs`
-    # (set `log = ...` in rproxy.conf to also write a file under /data).

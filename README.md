@@ -68,23 +68,44 @@ A multi-stage build produces a small (~25 MB) image on `distroless/cc`
 is **`/data`** (`RPROXY_DIR=/data`): on first run rproxy writes `rproxy.conf` and
 `blocked.txt` there and loads them.
 
+**Recommended — Docker Compose** (see [docker-compose.yml](docker-compose.yml)):
+
+```sh
+docker compose up -d --build
+```
+
+That's the whole thing. The container creates `rproxy.conf` + `blocked.txt`
+inside itself and shares them out to a `./data` folder on the host, ready to
+edit — no manual `mkdir`/`cp`/`chown`. (A one-shot `data-init` helper hands
+`./data` to the container's uid 65532 before rproxy starts; it shows as
+`Exited (0)` in `docker compose ps`, which is normal.) Then:
+
+```sh
+sudo nano data/rproxy.conf     # sudo: the files are owned by uid 65532
+docker compose restart rproxy  # apply the change
+```
+
+Edits persist across restarts, rebuilds, and reboots. Logs go to stdout — view
+with `docker compose logs -f rproxy`.
+
+**Plain `docker run`** (no compose):
+
 ```sh
 docker build -t rproxy .
 
 # run it; point the Android device at <docker-host-ip>:20487
 docker run --rm -p 20487:20487 rproxy
 
-# keep + edit the config on the host: mount a folder over /data (first run
-# populates it), then edit ./data/rproxy.conf and ./data/blocked.txt and restart
+# to keep + edit config on the host, mount a folder over /data — but pre-create
+# it owned by uid 65532 first, since Docker would otherwise create it as root
+# and rproxy (uid 65532) couldn't write there:
+mkdir -p data && sudo chown 65532:65532 data
 docker run --rm -p 20487:20487 -v "$PWD/data:/data" rproxy
 ```
 
-Logs go to stdout — view with `docker logs <container>`. Or `docker compose up`
-(see [docker-compose.yml](docker-compose.yml)).
-
-> The mounted `/data` folder must be writable by the container user (uid
-> 65532), otherwise rproxy can't create/edit its config and falls back to
-> built-in defaults.
+> Without compose's `data-init` step, the mounted `/data` folder must be
+> writable by uid 65532 — otherwise rproxy can't create its config and falls
+> back to built-in defaults.
 
 > **Caveat — client IP in logs:** with published ports (`-p`), Docker NATs the
 > connection, so the `peer` field shows the Docker gateway (e.g. `172.17.0.1`),
