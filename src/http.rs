@@ -100,10 +100,13 @@ impl RequestHead {
 /// `http://user@host:8080/path?q` into its destination + logged URL.
 fn parse_absolute_uri(raw: &str, host_header: Option<&str>) -> Option<Target> {
     // Only `http://` absolute-form reaches a proxy in cleartext; `https://`
-    // arrives via CONNECT, never as a plain request-line.
-    let rest = raw
-        .strip_prefix("http://")
-        .or_else(|| raw.strip_prefix("HTTP://"))?;
+    // arrives via CONNECT, never as a plain request-line. The scheme is
+    // case-insensitive (RFC 3986 §3.1); if the 7 prefix bytes match `http://`
+    // they are all ASCII, so slicing at 7 is a valid char boundary.
+    let rest = match raw.as_bytes().get(..7) {
+        Some(p) if p.eq_ignore_ascii_case(b"http://") => &raw[7..],
+        _ => return None,
+    };
 
     // The authority ends at the first '/', '?' or '#' (RFC 3986 §3.2). Anything
     // after is the path/query/fragment; normalise it to an origin-form path.
@@ -303,6 +306,24 @@ mod tests {
                 assert_eq!(url, "http://example.com:8080/api");
             }
             other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mixed_case_scheme() {
+        // Scheme is case-insensitive (RFC 3986 §3.1).
+        for head in [
+            b"GET Http://example.com/ HTTP/1.1\r\n\r\n".as_slice(),
+            b"GET HtTp://example.com/ HTTP/1.1\r\n\r\n".as_slice(),
+        ] {
+            match RequestHead::parse(head).unwrap().target {
+                Target::Http { host, port, url } => {
+                    assert_eq!(host, "example.com");
+                    assert_eq!(port, 80);
+                    assert_eq!(url, "http://example.com:80/");
+                }
+                other => panic!("unexpected: {other:?}"),
+            }
         }
     }
 

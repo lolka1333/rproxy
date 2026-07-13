@@ -27,6 +27,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc::{self, Sender, error::TrySendError};
@@ -65,7 +66,12 @@ pub struct HttpRecord<'a> {
 
 impl Logger {
     /// Create a logger writing to stdout and, optionally, appending to a file.
-    pub fn new(file: Option<&Path>, format: Format) -> io::Result<Logger> {
+    ///
+    /// Returns the [`Logger`] plus the sink thread's [`JoinHandle`]. At shutdown,
+    /// drop every `Logger` (and any clones held by tasks) then `join()` the
+    /// handle so the queued tail — the `SHUTDOWN` line and the last `CLOSE`
+    /// records — is flushed before the process exits.
+    pub fn new(file: Option<&Path>, format: Format) -> io::Result<(Logger, JoinHandle<()>)> {
         let mut file_writer = match file {
             Some(path) => Some(io::BufWriter::new(
                 std::fs::OpenOptions::new()
@@ -80,7 +86,7 @@ impl Logger {
 
         // Dedicated blocking sink thread: writes are small, and a plain thread
         // keeps synchronous file I/O off the async runtime.
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             let stdout = io::stdout();
             while let Some(line) = rx.blocking_recv() {
                 let mut out = stdout.lock();
@@ -93,11 +99,12 @@ impl Logger {
             }
         });
 
-        Ok(Logger {
+        let logger = Logger {
             tx,
             dropped: Arc::new(AtomicU64::new(0)),
             format,
-        })
+        };
+        Ok((logger, handle))
     }
 
     /// Enqueue a formatted line without ever blocking. If the queue is full the

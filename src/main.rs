@@ -39,8 +39,8 @@ fn main() -> ExitCode {
     };
 
     let format = if cfg.json { Format::Json } else { Format::Text };
-    let logger = match Logger::new(cfg.log_file.as_deref(), format) {
-        Ok(l) => l,
+    let (logger, log_handle) = match Logger::new(cfg.log_file.as_deref(), format) {
+        Ok(pair) => pair,
         Err(e) => {
             eprintln!("rproxy: cannot open log file: {e}");
             return ExitCode::FAILURE;
@@ -59,7 +59,16 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(proxy::run(cfg, logger)) {
+    let result = runtime.block_on(proxy::run(cfg, logger));
+
+    // Drop the runtime first — this cancels spawned connection tasks, releasing
+    // the `Logger` clones they hold, so the last `Sender` is gone and the sink
+    // thread drains its queue to completion. Then join it so the final log lines
+    // (the SHUTDOWN marker, last CLOSE records) reach disk/stdout before we exit.
+    drop(runtime);
+    let _ = log_handle.join();
+
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("rproxy: fatal: {e}");
