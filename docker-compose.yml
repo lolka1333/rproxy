@@ -1,0 +1,20 @@
+services:
+  rproxy:
+    build: .
+    image: rproxy
+    container_name: rproxy
+    # Publish the proxy port; point the Android device at <docker-host-ip>:20487.
+    ports:
+      - "20487:20487"
+    restart: unless-stopped
+
+    # The container's data dir is /data. On first run rproxy writes rproxy.conf
+    # and blocked.txt there and loads them. Mount a host folder over it to keep
+    # and edit those files from outside the container:
+    #
+    #   volumes:
+    #     - ./data:/data      # must be writable by uid 65532 (the container user)
+    #
+    # Then edit ./data/rproxy.conf (listen, timeouts, `blocklist = blocked.txt`,
+    # …) and ./data/blocked.txt, and restart. Logs go to stdout -> `docker logs`
+    # (set `log = ...` in rproxy.conf to also write a file under /data).

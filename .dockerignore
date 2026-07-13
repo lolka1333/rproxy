@@ -1,0 +1,10 @@
+# Keep the build context tiny: only Cargo.toml, Cargo.lock and src/ are needed.
+/target
+**/*.log
+.git
+.gitignore
+.claude
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md

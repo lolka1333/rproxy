@@ -1,0 +1,98 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  blocked.txt — example soft-block list for rproxy
+#
+#  Activate by setting `blocking = on` in rproxy.conf (the list is already
+#  wired there via `blocklist = blocked.txt`).
+#
+#    • one domain per line; matching is subdomain-aware and case-insensitive
+#      (doubleclick.net also blocks stats.g.doubleclick.net)
+#    • "#" starts a comment; blank lines are ignored
+#    • a leading "*." or "." is optional (ads.example == *.ads.example)
+#
+#  Blocked sites are NOT hard-failed: rproxy relays up to `block-cap` bytes
+#  (13 KiB by default), then drops the connection.
+#
+#  This is a STARTING POINT of well-known ad / tracker / telemetry domains —
+#  curate it for your needs. Note: traffic over QUIC/HTTP-3 (UDP 443) or from
+#  apps that ignore the system proxy won't pass through rproxy and so can't be
+#  blocked here (see the README).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ── Ad networks & exchanges ──────────────────────────────────────────────────
+doubleclick.net
+googlesyndication.com
+googleadservices.com
+adservice.google.com
+amazon-adsystem.com
+adnxs.com                 # AppNexus / Xandr
+adsrvr.org                # The Trade Desk
+rubiconproject.com
+pubmatic.com
+openx.net
+casalemedia.com
+criteo.com
+criteo.net
+taboola.com
+outbrain.com
+moatads.com
+smartadserver.com
+adform.net
+3lift.com
+sharethrough.com
+yieldmo.com
+bidswitch.net
+
+
+# ── Analytics & session tracking ─────────────────────────────────────────────
+google-analytics.com
+googletagmanager.com
+googletagservices.com
+scorecardresearch.com
+quantserve.com
+quantcount.com
+hotjar.com
+mouseflow.com
+fullstory.com
+mixpanel.com
+segment.com
+segment.io
+amplitude.com
+heapanalytics.com
+chartbeat.com
+mc.yandex.ru              # Yandex Metrica
+
+
+# ── Mobile SDK / app telemetry & attribution ─────────────────────────────────
+app-measurement.com       # Firebase / Google mobile analytics
+appsflyer.com
+adjust.com
+branch.io
+kochava.com
+singular.net
+tenjin.io
+flurry.com
+applovin.com
+adcolony.com
+vungle.com
+chartboost.com
+inmobi.com
+supersonicads.com
+startappservice.com
+
+
+# ── Social widgets & pixels ──────────────────────────────────────────────────
+connect.facebook.net      # Facebook pixel / JS SDK (tracking)
+an.facebook.com           # Facebook Audience Network (ads)
+ads.tiktok.com
+analytics.tiktok.com
+ads-twitter.com
+analytics.twitter.com
+ads.linkedin.com
+px.ads.linkedin.com
+ads.pinterest.com
+bat.bing.com              # Microsoft ad tracking
+
+
+# ── Custom ───────────────────────────────────────────────────────────────────
+check-host.net            # network diagnostics site — added for testing

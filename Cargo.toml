@@ -1,0 +1,33 @@
+[package]
+name = "rproxy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+description = "Logging-only HTTP forward proxy for Android's Global HTTP Proxy (URLs / domains / IPs, no TLS decryption)"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["proxy", "http-proxy", "android", "logging", "adblock"]
+categories = ["command-line-utilities", "network-programming"]
+
+[[bin]]
+name = "rproxy"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "time",
+    "sync",
+    "signal",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+# panic = "unwind" (the default): a panic in one connection task is isolated by
+# tokio and the accept loop keeps serving, rather than aborting the process.
+strip = true
