@@ -95,13 +95,25 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
     let cfg = Arc::new(cfg);
     let blocklist = Arc::new(blocklist);
 
+    // Graceful shutdown on Ctrl-C (SIGINT). One future, reused across the loop.
+    // If the signal can't be registered — as happens in some containers — this
+    // never fires and the proxy simply runs until it's killed (`docker stop`
+    // sends SIGTERM), rather than mistaking the *failure* to register for a
+    // shutdown request (which would exit immediately in a restart loop).
+    let shutdown = async {
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(shutdown);
+
     loop {
         // Back-pressure: block accepting new sockets while at the connection
-        // cap. Race against ctrl_c so shutdown stays responsive even when every
+        // cap. Race against shutdown so ctrl_c stays responsive even when every
         // permit is held (otherwise the loop would park here, deaf to signals).
         let permit = tokio::select! {
             p = sem.clone().acquire_owned() => p.expect("semaphore never closed"),
-            _ = tokio::signal::ctrl_c() => {
+            () = &mut shutdown => {
                 logger.info("SHUTDOWN signal received, stopping accept loop");
                 return Ok(());
             }
@@ -109,7 +121,7 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
 
         let accepted = tokio::select! {
             res = listener.accept() => res,
-            _ = tokio::signal::ctrl_c() => {
+            () = &mut shutdown => {
                 logger.info("SHUTDOWN signal received, stopping accept loop");
                 return Ok(());
             }
