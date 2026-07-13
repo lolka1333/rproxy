@@ -6,24 +6,20 @@
 FROM rust:1.96.1-slim-bookworm AS build
 WORKDIR /src
 
-# Cache the (slow) dependency compile: build a stub against the real manifests
-# first, so `cargo build` only recompiles our crate when src/ changes.
+# rproxy.conf / blocked.txt are embedded (include_str!) as the first-run
+# templates, so they must be present at build time.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src \
-    && echo 'fn main() {}' > src/main.rs \
-    && cargo build --release --locked \
-    && rm -rf src
-
-# Build the real binary. rproxy.conf / blocked.txt are embedded (include_str!)
-# as the first-run templates, so they must be present. `--locked` enforces the
-# committed Cargo.lock.
 COPY src ./src
 COPY rproxy.conf blocked.txt ./
+
+# Build the real binary. `--locked` enforces the committed Cargo.lock.
+# (No dependency-caching stub trick — under Docker its stale mtime could make
+# cargo skip the real compile and ship an empty `fn main(){}` binary.)
 RUN cargo build --release --locked
 
-# Seed the data dir with the default config so `docker run` works out of the
-# box even without a mounted volume (and even if /data ends up read-only): the
-# files are already present, so nothing needs to be written at runtime.
+# Seed the data dir with the default config so `docker run` works out of the box
+# even without a mounted volume (and even if /data ends up read-only): the files
+# are already present, so nothing needs to be written at runtime.
 RUN mkdir -p /data && cp rproxy.conf blocked.txt /data/
 
 # ---- runtime stage ---------------------------------------------------------
@@ -40,6 +36,6 @@ VOLUME ["/data"]
 
 EXPOSE 20487
 ENTRYPOINT ["/usr/local/bin/rproxy"]
-# No default flags: the auto-created /data/rproxy.conf governs (listen 0.0.0.0:20487).
-# Append flags after the image name to override, e.g. `docker run rproxy -v`.
+# No default flags: the seeded /data/rproxy.conf governs (listen 0.0.0.0:20487).
+# Append flags after the image name to override, e.g. `docker run rproxy --dir /x`.
 CMD []
