@@ -71,7 +71,7 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
     // list is ignored entirely (and its file isn't even read). Build it up front
     // so a bad file fails fast, before binding.
     let blocklist = if cfg.blocking {
-        BlockList::build(&cfg.block, cfg.blocklist_file.as_deref())?
+        BlockList::build(&cfg.block, &cfg.blocklist_files)?
     } else {
         BlockList::default()
     };
@@ -84,7 +84,7 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
         cfg.connect_timeout.as_secs(),
         cfg.idle_timeout.as_secs(),
     ));
-    let list_configured = !cfg.block.is_empty() || cfg.blocklist_file.is_some();
+    let list_configured = !cfg.block.is_empty() || !cfg.blocklist_files.is_empty();
     if !blocklist.is_empty() {
         logger.info(format!(
             "blocking: on — {} domain(s), soft-block cap={}B",

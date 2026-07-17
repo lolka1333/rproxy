@@ -48,8 +48,9 @@ pub struct Config {
     pub blocking: bool,
     /// Inline blocked domains (`block`), matched with subdomains.
     pub block: Vec<String>,
-    /// Optional file of blocked domains, one per line (`blocklist`).
-    pub blocklist_file: Option<PathBuf>,
+    /// Files of blocked domains, one per line (`blocklist`, repeatable — every
+    /// listed file is loaded and merged; duplicates across files collapse).
+    pub blocklist_files: Vec<PathBuf>,
     /// Bytes a blocked destination may deliver before the connection is dropped.
     pub block_cap: u64,
 }
@@ -67,7 +68,7 @@ impl Default for Config {
             json: false,
             blocking: false,
             block: Vec::new(),
-            blocklist_file: None,
+            blocklist_files: Vec::new(),
             block_cap: DEFAULT_BLOCK_CAP,
         }
     }
@@ -144,7 +145,11 @@ fn load_file(path: &Path, cfg: &mut Config) -> Result<(), String> {
     parse_config(&text, cfg)?;
     if let Some(base) = path.parent().filter(|b| !b.as_os_str().is_empty()) {
         rebase(&mut cfg.log_file, base);
-        rebase(&mut cfg.blocklist_file, base);
+        for p in &mut cfg.blocklist_files {
+            if p.is_relative() {
+                *p = base.join(&*p);
+            }
+        }
     }
     Ok(())
 }
@@ -211,7 +216,7 @@ fn set(cfg: &mut Config, key: &str, value: &str) -> Result<(), String> {
         }
         "blocking" => cfg.blocking = boolean(value, key)?,
         "block" => cfg.block.push(req(value, key)?.to_string()),
-        "blocklist" => cfg.blocklist_file = Some(PathBuf::from(req(value, key)?)),
+        "blocklist" => cfg.blocklist_files.push(PathBuf::from(req(value, key)?)),
         "block-cap" => cfg.block_cap = num(value, key)?,
         "verbose" => cfg.verbose = boolean(value, key)?,
         "json" => cfg.json = boolean(value, key)?,
@@ -418,8 +423,23 @@ mod tests {
         std::fs::write(&cfg_path, "blocklist = blocked.txt\nlog = out.log\n").unwrap();
         let mut cfg = Config::default();
         load_file(&cfg_path, &mut cfg).unwrap();
-        assert_eq!(cfg.blocklist_file.unwrap(), dir.join("blocked.txt"));
+        assert_eq!(cfg.blocklist_files, vec![dir.join("blocked.txt")]);
         assert_eq!(cfg.log_file.unwrap(), dir.join("out.log"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn blocklist_is_repeatable() {
+        // Several `blocklist =` lines accumulate (like `block =`) instead of the
+        // last one overwriting the rest.
+        let c = parsed("blocklist = ads.txt\nblocklist = music.txt\nblocklist = vk.txt\n");
+        assert_eq!(
+            c.blocklist_files,
+            vec![
+                PathBuf::from("ads.txt"),
+                PathBuf::from("music.txt"),
+                PathBuf::from("vk.txt"),
+            ]
+        );
     }
 }

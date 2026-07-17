@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 use std::io;
-use std::path::Path;
+use std::path::PathBuf;
 
 /// A set of blocked domains. A host matches if it equals a listed domain or is
 /// a subdomain of one: `example.com` blocks `example.com` and any
@@ -19,17 +19,22 @@ pub struct BlockList {
 }
 
 impl BlockList {
-    /// Build from inline `block` entries plus an optional `blocklist` file of
-    /// one-domain-per-line; blank lines and `#` comments are ignored.
-    pub fn build(inline: &[String], file: Option<&Path>) -> io::Result<BlockList> {
+    /// Build from inline `block` entries plus any number of `blocklist` files of
+    /// one-domain-per-line; blank lines and `#` comments are ignored. Entries
+    /// from every source merge into one set, so duplicates collapse and order is
+    /// irrelevant. A file that cannot be read is a hard error (named), so a
+    /// mistyped path fails fast at startup rather than silently disabling blocks.
+    pub fn build(inline: &[String], files: &[PathBuf]) -> io::Result<BlockList> {
         let mut domains = HashSet::new();
         for entry in inline {
             if let Some(d) = normalize(entry) {
                 domains.insert(d);
             }
         }
-        if let Some(path) = file {
-            let text = std::fs::read_to_string(path)?;
+        for path in files {
+            let text = std::fs::read_to_string(path).map_err(|e| {
+                io::Error::new(e.kind(), format!("blocklist {}: {e}", path.display()))
+            })?;
             for line in text.lines() {
                 if let Some(d) = normalize(line) {
                     domains.insert(d);
@@ -95,7 +100,7 @@ mod tests {
     fn list(entries: &[&str]) -> BlockList {
         BlockList::build(
             &entries.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-            None,
+            &[],
         )
         .unwrap()
     }
@@ -151,10 +156,33 @@ mod tests {
             .lines()
             .map(String::from)
             .collect();
-        let bl = BlockList::build(&entries, None).unwrap();
+        let bl = BlockList::build(&entries, &[]).unwrap();
         assert!(!bl.is_empty());
         assert!(bl.is_blocked("doubleclick.net"));
         assert!(bl.is_blocked("stats.g.doubleclick.net")); // subdomain
         assert!(bl.is_blocked("connect.facebook.net"));
+    }
+
+    #[test]
+    fn merges_multiple_files() {
+        // Several `blocklist` files load into one set; duplicates across files
+        // collapse, and inline `block` entries merge in too.
+        let dir = std::env::temp_dir().join(format!("rproxy_blm_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "ads.example\n# a comment\n").unwrap();
+        std::fs::write(&b, "tracker.net\nads.example\n").unwrap(); // ads.example repeats
+        let bl = BlockList::build(&["inline.dom".to_string()], &[a, b]).unwrap();
+        assert_eq!(bl.len(), 3); // ads.example, tracker.net, inline.dom
+        assert!(bl.is_blocked("x.ads.example"));
+        assert!(bl.is_blocked("tracker.net"));
+        assert!(bl.is_blocked("inline.dom"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_file_is_a_named_error() {
+        let err = BlockList::build(&[], &[PathBuf::from("no_such_blocklist_xyz.txt")]).unwrap_err();
+        assert!(err.to_string().contains("no_such_blocklist_xyz.txt"));
     }
 }
