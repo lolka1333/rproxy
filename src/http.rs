@@ -113,24 +113,23 @@ fn parse_absolute_uri(raw: &str, host_header: Option<&str>) -> Option<Target> {
     let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..auth_end];
     let tail = &rest[auth_end..];
-    let path = if tail.is_empty() {
-        "/".to_string()
-    } else if tail.starts_with('/') {
+    let path = if tail.starts_with('/') {
         tail.to_string()
     } else {
-        // tail begins with '?' or '#'
+        // empty, or begins with '?'/'#': origin-form needs a leading '/'
         format!("/{tail}")
     };
 
     // Strip optional userinfo (`user:pass@`).
     let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
 
-    let (host, port) = if authority.is_empty() {
-        // Degenerate `http:///path` — fall back to the Host header.
-        split_host_port(host_header?, 80)?
+    // Degenerate `http:///path` — fall back to the Host header.
+    let authority = if authority.is_empty() {
+        host_header?
     } else {
-        split_host_port(authority, 80)?
+        authority
     };
+    let (host, port) = split_host_port(authority, 80)?;
 
     let url = format!("http://{host}:{port}{path}");
     Some(Target::Http { host, port, url })
@@ -209,10 +208,7 @@ fn origin_form_path(target: &[u8]) -> Vec<u8> {
                 t.to_vec()
             } else {
                 // begins with '?' or '#': origin-form still needs a leading '/'
-                let mut v = Vec::with_capacity(t.len() + 1);
-                v.push(b'/');
-                v.extend_from_slice(t);
-                v
+                [b"/".as_slice(), t].concat()
             }
         }
         None => b"/".to_vec(),

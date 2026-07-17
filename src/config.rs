@@ -164,13 +164,9 @@ fn rebase(path: &mut Option<PathBuf>, base: &Path) {
 /// Strip a `#` comment, but only when `#` starts the line or follows
 /// whitespace — so a value (e.g. a filesystem path) may contain a literal `#`.
 fn strip_comment(raw: &str) -> &str {
-    match raw
-        .char_indices()
+    raw.char_indices()
         .find(|&(i, c)| c == '#' && (i == 0 || raw[..i].ends_with(char::is_whitespace)))
-    {
-        Some((i, _)) => &raw[..i],
-        None => raw,
-    }
+        .map_or(raw, |(i, _)| &raw[..i])
 }
 
 /// Parse the `key = value` config text over `cfg`. `#` starts a comment (whole

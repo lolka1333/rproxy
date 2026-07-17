@@ -350,10 +350,9 @@ fn idle(cfg: &Config) -> Option<Duration> {
 /// `write_all` bounded by a timeout, so a peer that stops reading can't hang the
 /// task on a full socket buffer.
 async fn write_with_timeout(stream: &mut TcpStream, data: &[u8], dur: Duration) -> io::Result<()> {
-    match timeout(dur, stream.write_all(data)).await {
-        Ok(res) => res,
-        Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "write timeout")),
-    }
+    timeout(dur, stream.write_all(data))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "write timeout"))?
 }
 
 /// Relay bytes between `client` and `upstream` until both sides close, an I/O

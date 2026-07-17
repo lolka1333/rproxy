@@ -203,10 +203,9 @@ impl Logger {
                 )
             }
             Format::Json => {
-                let hh = match host_header {
-                    Some(h) => format!(r#","host_header":{}"#, jstr(h)),
-                    None => String::new(),
-                };
+                let hh = host_header
+                    .map(|h| format!(r#","host_header":{}"#, jstr(h)))
+                    .unwrap_or_default();
                 let b = if blocked { r#","blocked":true"# } else { "" };
                 format!(
                     r#"{{"ts":"{ts}","id":{id},"ev":"http","method":{},"url":{},"host":{},"port":{port},"ip":{},"peer":{}{hh}{b}}}"#,

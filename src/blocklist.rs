@@ -26,20 +26,12 @@ impl BlockList {
     /// mistyped path fails fast at startup rather than silently disabling blocks.
     pub fn build(inline: &[String], files: &[PathBuf]) -> io::Result<BlockList> {
         let mut domains = HashSet::new();
-        for entry in inline {
-            if let Some(d) = normalize(entry) {
-                domains.insert(d);
-            }
-        }
+        domains.extend(inline.iter().filter_map(|s| normalize(s)));
         for path in files {
             let text = std::fs::read_to_string(path).map_err(|e| {
                 io::Error::new(e.kind(), format!("blocklist {}: {e}", path.display()))
             })?;
-            for line in text.lines() {
-                if let Some(d) = normalize(line) {
-                    domains.insert(d);
-                }
-            }
+            domains.extend(text.lines().filter_map(normalize));
         }
         Ok(BlockList { domains })
     }
