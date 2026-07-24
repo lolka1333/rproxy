@@ -53,6 +53,16 @@ pub struct Config {
     pub blocklist_files: Vec<PathBuf>,
     /// Bytes a blocked destination may deliver before the connection is dropped.
     pub block_cap: u64,
+    /// Inline hard-blocked domains (`hard-block`): refused before dialing
+    /// upstream at all — no bytes relayed, no TLS handshake completed — unlike
+    /// `block`, which lets `block_cap` bytes through first. For a destination
+    /// whose client aggressively reconnects/resumes (e.g. chat streaming), that
+    /// per-connection budget can add up to a working session even while
+    /// soft-blocked; hard-block denies every attempt outright instead.
+    pub hard_block: Vec<String>,
+    /// Files of hard-blocked domains, one per line (`hard-blocklist`,
+    /// repeatable — every listed file is loaded and merged).
+    pub hard_blocklist_files: Vec<PathBuf>,
 }
 
 impl Default for Config {
@@ -70,12 +80,16 @@ impl Default for Config {
             block: Vec::new(),
             blocklist_files: Vec::new(),
             block_cap: DEFAULT_BLOCK_CAP,
+            hard_block: Vec::new(),
+            hard_blocklist_files: Vec::new(),
         }
     }
 }
 
 pub enum Parsed {
-    Run(Config),
+    /// Boxed so the enum isn't sized by `Config` (which dwarfs the empty `Help`
+    /// variant); this is a once-per-startup value, so the indirection is free.
+    Run(Box<Config>),
     Help,
 }
 
@@ -101,7 +115,7 @@ impl Config {
         if let Some(path) = flag_value(&args, &["--config", "-c"])? {
             load_file(&path, &mut cfg)?;
         }
-        Ok(Parsed::Run(cfg))
+        Ok(Parsed::Run(Box::new(cfg)))
     }
 }
 
@@ -146,6 +160,11 @@ fn load_file(path: &Path, cfg: &mut Config) -> Result<(), String> {
     if let Some(base) = path.parent().filter(|b| !b.as_os_str().is_empty()) {
         rebase(&mut cfg.log_file, base);
         for p in &mut cfg.blocklist_files {
+            if p.is_relative() {
+                *p = base.join(&*p);
+            }
+        }
+        for p in &mut cfg.hard_blocklist_files {
             if p.is_relative() {
                 *p = base.join(&*p);
             }
@@ -214,6 +233,10 @@ fn set(cfg: &mut Config, key: &str, value: &str) -> Result<(), String> {
         "block" => cfg.block.push(req(value, key)?.to_string()),
         "blocklist" => cfg.blocklist_files.push(PathBuf::from(req(value, key)?)),
         "block-cap" => cfg.block_cap = num(value, key)?,
+        "hard-block" => cfg.hard_block.push(req(value, key)?.to_string()),
+        "hard-blocklist" => cfg
+            .hard_blocklist_files
+            .push(PathBuf::from(req(value, key)?)),
         "verbose" => cfg.verbose = boolean(value, key)?,
         "json" => cfg.json = boolean(value, key)?,
         _ => return Err(format!("unknown setting: {key}")),
@@ -282,7 +305,7 @@ mod tests {
 
     fn run(args: &[&str]) -> Config {
         match Config::from_args(args.iter().copied()).unwrap() {
-            Parsed::Run(c) => c,
+            Parsed::Run(c) => *c,
             Parsed::Help => panic!("unexpected help"),
         }
     }
@@ -350,6 +373,24 @@ mod tests {
     }
 
     #[test]
+    fn hard_block_parses_and_repeats() {
+        let c = parsed(
+            "hard-block = chat.deepseek.com\n\
+             hard-block = evil.example\n\
+             hard-blocklist = hard.txt\n\
+             hard-blocklist = hard2.txt\n",
+        );
+        assert_eq!(
+            c.hard_block,
+            vec!["chat.deepseek.com".to_string(), "evil.example".to_string()]
+        );
+        assert_eq!(
+            c.hard_blocklist_files,
+            vec![PathBuf::from("hard.txt"), PathBuf::from("hard2.txt")]
+        );
+    }
+
+    #[test]
     fn blocking_switch() {
         assert!(!Config::default().blocking); // off by default
         assert!(parsed("blocking = on\n").blocking);
@@ -402,7 +443,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("rproxy_cfg_{}.conf", std::process::id()));
         std::fs::write(&path, "listen = 9.9.9.9:1\nverbose = true\nmax-conns = 7\n").unwrap();
         let c = match Config::from_args(["--config", path.to_str().unwrap()]).unwrap() {
-            Parsed::Run(c) => c,
+            Parsed::Run(c) => *c,
             Parsed::Help => panic!("unexpected help"),
         };
         let _ = std::fs::remove_file(&path);
@@ -416,10 +457,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rproxy_rb_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let cfg_path = dir.join("rproxy.conf");
-        std::fs::write(&cfg_path, "blocklist = blocked.txt\nlog = out.log\n").unwrap();
+        std::fs::write(
+            &cfg_path,
+            "blocklist = blocked.txt\nhard-blocklist = hard.txt\nlog = out.log\n",
+        )
+        .unwrap();
         let mut cfg = Config::default();
         load_file(&cfg_path, &mut cfg).unwrap();
         assert_eq!(cfg.blocklist_files, vec![dir.join("blocked.txt")]);
+        assert_eq!(cfg.hard_blocklist_files, vec![dir.join("hard.txt")]);
         assert_eq!(cfg.log_file.unwrap(), dir.join("out.log"));
         let _ = std::fs::remove_dir_all(&dir);
     }

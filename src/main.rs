@@ -35,7 +35,7 @@ fn main() -> ExitCode {
             print!("{}", config::HELP);
             return ExitCode::SUCCESS;
         }
-        Parsed::Run(cfg) => cfg,
+        Parsed::Run(cfg) => *cfg,
     };
 
     let format = if cfg.json { Format::Json } else { Format::Text };

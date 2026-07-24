@@ -42,6 +42,12 @@ const HEAD_CHUNK: usize = 8 * 1024;
 /// the default `max_conns = 1024`. Raise `max_conns` with that multiplier in mind.
 const RELAY_BUF: usize = 64 * 1024;
 
+/// Response for a hard-blocked destination — sent instead of ever dialing
+/// upstream, so it reads to the client exactly like an ordinary upstream
+/// failure (compare `dial`'s `DialError`), not a distinguishable "the proxy
+/// blocked you".
+const HARD_BLOCK_STATUS: &[u8] = b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n";
+
 /// Monotonic per-connection id, used to correlate open/close/error log lines.
 static CONN_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -53,6 +59,7 @@ struct Conn<'a> {
     cfg: &'a Config,
     logger: &'a Logger,
     blocklist: &'a BlockList,
+    hard_blocklist: &'a BlockList,
 }
 
 impl Conn<'_> {
@@ -63,6 +70,12 @@ impl Conn<'_> {
             .is_blocked(host)
             .then_some(self.cfg.block_cap)
     }
+
+    /// Is `host` hard-blocked? Checked before dialing upstream — unlike
+    /// `download_cap`, this never lets a single byte through.
+    fn is_hard_blocked(&self, host: &str) -> bool {
+        self.hard_blocklist.is_blocked(host)
+    }
 }
 
 /// Bind, then accept connections until the shutdown signal fires.
@@ -72,6 +85,11 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
     // so a bad file fails fast, before binding.
     let blocklist = if cfg.blocking {
         BlockList::build(&cfg.block, &cfg.blocklist_files)?
+    } else {
+        BlockList::default()
+    };
+    let hard_blocklist = if cfg.blocking {
+        BlockList::build(&cfg.hard_block, &cfg.hard_blocklist_files)?
     } else {
         BlockList::default()
     };
@@ -96,10 +114,17 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
     } else if list_configured {
         logger.info("blocking: off (a block list is configured; set `blocking = on` to enable)");
     }
+    if !hard_blocklist.is_empty() {
+        logger.info(format!(
+            "hard-block: on — {} domain(s), refused before dialing",
+            hard_blocklist.len()
+        ));
+    }
 
     let sem = Arc::new(Semaphore::new(cfg.max_conns));
     let cfg = Arc::new(cfg);
     let blocklist = Arc::new(blocklist);
+    let hard_blocklist = Arc::new(hard_blocklist);
 
     // Graceful shutdown on Ctrl-C (SIGINT). One future, reused across the loop.
     // If the signal can't be registered — as happens in some containers — this
@@ -145,6 +170,7 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
         let logger = logger.clone();
         let cfg = cfg.clone();
         let blocklist = blocklist.clone();
+        let hard_blocklist = hard_blocklist.clone();
         tokio::spawn(async move {
             let _permit = permit; // released on task completion
             let id = CONN_ID.fetch_add(1, Ordering::Relaxed);
@@ -154,6 +180,7 @@ pub async fn run(cfg: Config, logger: Logger) -> io::Result<()> {
                 cfg: cfg.as_ref(),
                 logger: &logger,
                 blocklist: blocklist.as_ref(),
+                hard_blocklist: hard_blocklist.as_ref(),
             };
             if let Err(e) = handle(&conn, client).await {
                 // Most errors here are benign (client hung up, reset, timeout).
@@ -193,8 +220,15 @@ async fn handle_connect(
     port: u16,
     leftover: &[u8],
 ) -> io::Result<()> {
-    let started = Instant::now();
     let target = format!("{host}:{port}");
+    if conn.is_hard_blocked(host) {
+        conn.logger
+            .failed(conn.id, "CONNECT", &target, conn.peer, "hard-blocked");
+        let _ = write_with_timeout(&mut client, HARD_BLOCK_STATUS, conn.cfg.connect_timeout).await;
+        return Ok(());
+    }
+
+    let started = Instant::now();
     let cap = conn.download_cap(host);
 
     let mut upstream = match dial(host, port, conn.cfg).await {
@@ -253,6 +287,13 @@ async fn handle_http(
         ));
     };
     let port = *port;
+    if conn.is_hard_blocked(host) {
+        conn.logger
+            .failed(conn.id, &head.method, url, conn.peer, "hard-blocked");
+        let _ = write_with_timeout(&mut client, HARD_BLOCK_STATUS, conn.cfg.connect_timeout).await;
+        return Ok(());
+    }
+
     let cap = conn.download_cap(host);
     let started = Instant::now();
 
